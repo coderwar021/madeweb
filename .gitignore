@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+data/
+agent/deployment-agent/state/
+.env
+*.db
+.DS_Store
+.vite/

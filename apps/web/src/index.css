@@ -1,0 +1,34 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: #12110f;
+  color: #f3efe6;
+}
+
+::selection {
+  background: #ff4d2e;
+  color: white;
+}
+
+textarea,
+input,
+button,
+select {
+  font: inherit;
+}
+
+.prompt {
+  background:
+    linear-gradient(#f7f3ea, #f7f3ea) padding-box,
+    linear-gradient(120deg, #ff4d2e, #f3efe6 40%, #c8f54a) border-box;
+  border: 1px solid transparent;
+}

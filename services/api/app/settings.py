@@ -1,0 +1,71 @@
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
+@dataclass
+class Settings:
+    data_dir: Path
+    database_url: str | None = None
+    apps_database_url: str | None = None
+    admin_emails: set[str] = field(default_factory=set)
+    fast_pipeline: bool = False
+    bcrypt_rounds: int = 12
+    cookie_secure: bool = False
+    public_api_base: str = "http://127.0.0.1:8000"
+    retention_days: int = 30
+    cors_origins: list[str] = field(
+        default_factory=lambda: ["http://127.0.0.1:5173", "http://localhost:5173"]
+    )
+    repo_root: Path = field(default_factory=_repo_root)
+    platform_private_key: bytes = b""
+    platform_public_key: bytes = b""
+    platform_factory: Any = None
+    apps_factory: Any = None
+
+    @classmethod
+    def from_env(cls) -> Settings:
+        root = _repo_root()
+        data_dir = Path(os.environ.get("DATA_DIR", root / "data")).expanduser()
+        admins = {
+            item.strip().lower()
+            for item in os.environ.get("ADMIN_EMAILS", "").split(",")
+            if item.strip()
+        }
+        origins = [
+            item.strip()
+            for item in os.environ.get("CORS_ORIGINS", "http://127.0.0.1:5173,http://localhost:5173").split(",")
+            if item.strip()
+        ]
+        return cls(
+            data_dir=data_dir,
+            database_url=os.environ.get("DATABASE_URL") or None,
+            apps_database_url=os.environ.get("APPS_DATABASE_URL") or None,
+            admin_emails=admins,
+            fast_pipeline=os.environ.get("PIPELINE_FAST") == "1",
+            bcrypt_rounds=int(os.environ.get("BCRYPT_ROUNDS", "12")),
+            cookie_secure=os.environ.get("COOKIE_SECURE") == "1",
+            public_api_base=os.environ.get("PUBLIC_API_BASE", "http://127.0.0.1:8000"),
+            retention_days=int(os.environ.get("RETENTION_DAYS", "30")),
+            cors_origins=origins,
+            repo_root=root,
+        )
+
+    @property
+    def platform_url(self) -> str:
+        if self.database_url:
+            return self.database_url
+        return f"sqlite:///{self.data_dir / 'platform.db'}"
+
+    @property
+    def apps_url(self) -> str:
+        if self.apps_database_url:
+            return self.apps_database_url
+        return f"sqlite:///{self.data_dir / 'apps.db'}"
