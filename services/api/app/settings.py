@@ -44,6 +44,14 @@ class Settings:
             for item in os.environ.get("CORS_ORIGINS", "http://127.0.0.1:5173,http://localhost:5173").split(",")
             if item.strip()
         ]
+        domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "").strip()
+        public = os.environ.get("PUBLIC_API_BASE", "").strip()
+        if not public and domain:
+            public = f"https://{domain}"
+        if not public:
+            public = "http://127.0.0.1:8000"
+        secure_env = os.environ.get("COOKIE_SECURE", "").strip()
+        cookie_secure = secure_env == "1" if secure_env else public.startswith("https://")
         return cls(
             data_dir=data_dir,
             database_url=os.environ.get("DATABASE_URL") or None,
@@ -51,8 +59,8 @@ class Settings:
             admin_emails=admins,
             fast_pipeline=os.environ.get("PIPELINE_FAST") == "1",
             bcrypt_rounds=int(os.environ.get("BCRYPT_ROUNDS", "12")),
-            cookie_secure=os.environ.get("COOKIE_SECURE") == "1",
-            public_api_base=os.environ.get("PUBLIC_API_BASE", "http://127.0.0.1:8000"),
+            cookie_secure=cookie_secure,
+            public_api_base=public,
             retention_days=int(os.environ.get("RETENTION_DAYS", "30")),
             cors_origins=origins,
             repo_root=root,

@@ -8,7 +8,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.db import init_databases, purge_expired
@@ -112,7 +112,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(apps.router, prefix="/api/v1")
     app.include_router(runtime.router, prefix="/api/v1")
     app.include_router(agent.router, prefix="/api/v1")
+    _mount_frontend(app, settings)
     return app
+
+
+def _mount_frontend(app: FastAPI, settings: Settings) -> None:
+    dist = (settings.repo_root / "apps" / "web" / "dist").resolve()
+    index = dist / "index.html"
+    if not index.is_file():
+        return
+
+    def page(full_path: str = ""):
+        relative = full_path.strip("/")
+        if relative == "api" or relative.startswith("api/"):
+            raise HTTPException(status_code=404, detail="Not Found")
+        candidate = (dist / relative).resolve() if relative else index
+        if candidate != dist and dist not in candidate.parents:
+            raise HTTPException(status_code=404, detail="Not Found")
+        if candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(index)
+
+    app.add_api_route("/", page, methods=["GET"], include_in_schema=False)
+    app.add_api_route("/{full_path:path}", page, methods=["GET"], include_in_schema=False)
 
 
 def _install_redact() -> None:
