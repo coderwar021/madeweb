@@ -10,7 +10,7 @@ def is_owner(user: PlatformUser | None, app: Application) -> bool:
     return user is not None and user.deleted_at is None and app.owner_id == user.id
 
 
-def can_view_app(user: PlatformUser | None, app: Application) -> bool:
+def can_view_app(user: PlatformUser | None, app: Application, draft: bool = False) -> bool:
     if app.deleted_at is not None:
         return False
     if app.status == "disabled" and not is_owner(user, app):

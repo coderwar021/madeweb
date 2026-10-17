@@ -8,7 +8,8 @@ import time
 from sqlalchemy import func, select
 
 from app.ai.compile import compile_schema
-from app.ai.planner import plan_create, plan_edit, slug_base
+from app.ai.model import create_draft, edit_draft
+from app.ai.planner import slug_base
 from app.ai.seed import seed_marketplace
 from app.models import Application, AppVersion, GenerationJob
 from app.settings import Settings
@@ -69,7 +70,7 @@ def process_job(job_id: str, settings: Settings) -> None:
 def _create(platform, apps, settings: Settings, job: GenerationJob, app: Application) -> None:
     _beat(platform, settings, job, "intent", "done")
     _beat(platform, settings, job, "database", "running")
-    draft = plan_create(job.prompt)
+    draft = create_draft(job.prompt, settings)
     _beat(platform, settings, job, "database", "done")
     _beat(platform, settings, job, "interface", "running")
     if not draft.get("pages"):
@@ -101,7 +102,7 @@ def _edit(platform, settings: Settings, job: GenerationJob, app: Application) ->
     if current is None:
         _fail(platform, job, "intent", "还没有可以修改的版本")
         return
-    updated, message = plan_edit(loads(current.schema_json), job.prompt)
+    updated, message = edit_draft(loads(current.schema_json), job.prompt, settings)
     _beat(platform, settings, job, "intent", "done")
     if updated is None:
         if message.startswith("这个功能已经"):

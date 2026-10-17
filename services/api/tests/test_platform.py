@@ -184,10 +184,21 @@ def test_publish_remix_rollback_and_soft_delete(client):
     assert remixed.json()["app"]["remixOf"] == app_id
     remix_site = client.get(f"/api/v1/sites/{remixed.json()['app']['slug']}").json()
     assert client.get(f"/api/v1/runtime/{remix_site['app']['id']}/entities/Post").json()["total"] == 0
+    hidden = client.post(f"/api/v1/apps/{app_id}/unpublish", headers=auth(session))
+    assert hidden.status_code == 200, hidden.text
+    assert hidden.json()["app"]["published"] is False
+    assert hidden.json()["app"]["visibility"] == "private"
+    assert all(item["slug"] != slug for item in client.get("/api/v1/explore").json()["apps"])
+    other = TestClient(client.app_handle)
+    stranger = register(other, "viewer@example.com", "Vie")
+    assert other.get(f"/api/v1/sites/{slug}", headers=auth(stranger)).status_code == 404
+    draft = client.get(f"/api/v1/sites/{slug}?draft=true")
+    assert draft.status_code == 200
     removed = client.delete(f"/api/v1/apps/{app_id}", headers=auth(session))
     assert removed.status_code == 200
     assert client.get(f"/api/v1/sites/{slug}").status_code == 404
-    assert all(item["slug"] != slug for item in client.get("/api/v1/explore").json()["apps"])
+    assert client.get(f"/api/v1/sites/{slug}?draft=true").status_code == 404
+    assert all(item["id"] != app_id for item in client.get("/api/v1/apps", headers=auth(session)).json()["apps"])
 
 
 def test_private_app_is_hidden_and_messages_are_scoped(client):

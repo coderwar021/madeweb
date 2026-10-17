@@ -195,9 +195,26 @@ def delete_app(app_id: str, request: Request, db=Depends(platform_db)):
     require_csrf(request, session)
     app = _owned(db, user, app_id)
     app.deleted_at = utcnow()
+    app.published_version_id = None
+    app.visibility = "private"
+    app.status = "disabled"
     app.updated_at = utcnow()
     _audit(db, request, user.id, "DELETE", app.id, detail="soft delete")
     return {"ok": True}
+
+
+@router.post("/apps/{app_id}/unpublish")
+def unpublish(app_id: str, request: Request, db=Depends(platform_db)):
+    user, session = require_user(request, db)
+    require_csrf(request, session)
+    app = _owned(db, user, app_id)
+    if app.published_version_id is None:
+        raise HTTPException(status_code=400, detail="这个网站还没有发布")
+    app.published_version_id = None
+    app.visibility = "private"
+    app.updated_at = utcnow()
+    _audit(db, request, user.id, "UNPUBLISH", app.id)
+    return {"app": _summary(db, app, user.id)}
 
 
 @router.post("/apps/{app_id}/publish")
@@ -420,7 +437,13 @@ def site(slug: str, request: Request, draft: bool = False, db=Depends(platform_d
     if not owner and app.visibility == "public" and app.status == "active":
         app.view_count += 1
     return {
-        "app": _public_card(app, False) | {"owner": owner, "status": app.status, "dirty": app.current_version_id != app.published_version_id},
+        "app": _public_card(app, False)
+        | {
+            "owner": owner,
+            "status": app.status,
+            "published": app.published_version_id is not None,
+            "dirty": app.current_version_id != app.published_version_id,
+        },
         "version": version.version,
         "schema": schema_of(version),
     }

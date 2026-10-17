@@ -4,7 +4,7 @@ import { api } from "../api";
 import { LanguageSwitch, useI18n } from "../i18n";
 
 type SiteMeta = {
-  app: { id: string; name: string; owner: boolean; dirty: boolean; visibility: string };
+  app: { id: string; name: string; owner: boolean; dirty: boolean; visibility: string; published: boolean };
   version: number;
 };
 
@@ -16,6 +16,7 @@ export function Studio() {
   const [prompt, setPrompt] = useState("");
   const [promptTouched, setPromptTouched] = useState(false);
   const [notice, setNotice] = useState("");
+  const [busy, setBusy] = useState("");
   const navigate = useNavigate();
   const { t } = useI18n();
 
@@ -64,6 +65,43 @@ export function Studio() {
     setNotice(copied ? t("studioCopied", { extra: privacy, url }) : t("studioShareLink", { url }));
   }
 
+  async function unpublish() {
+    if (!meta) return;
+    setNotice("");
+    setBusy("unpublish");
+    try {
+      const data = await api(`/api/v1/apps/${meta.app.id}/unpublish`, { method: "POST", body: {} });
+      setMeta({
+        ...meta,
+        app: {
+          ...meta.app,
+          visibility: data.app.visibility,
+          dirty: data.app.dirty,
+          published: data.app.published,
+        },
+      });
+      setNotice(t("studioUnpublished"));
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : t("studioCantOpen"));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function remove() {
+    if (!meta) return;
+    if (!window.confirm(t("studioDeleteConfirm", { name: meta.app.name }))) return;
+    setNotice("");
+    setBusy("delete");
+    try {
+      await api(`/api/v1/apps/${meta.app.id}`, { method: "DELETE" });
+      navigate("/library");
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : t("studioCantOpen"));
+      setBusy("");
+    }
+  }
+
   if (error) {
     return <p className="p-10 text-ember">{error}</p>;
   }
@@ -89,6 +127,14 @@ export function Studio() {
           </button>
           <button onClick={remix} className="rounded-full px-3 py-1 ring-1 ring-white/15">
             {t("studioRemix")}
+          </button>
+          {meta?.app.published && (
+            <button disabled={busy === "unpublish"} onClick={unpublish} className="rounded-full px-3 py-1 ring-1 ring-white/15 disabled:opacity-40">
+              {t("studioUnpublish")}
+            </button>
+          )}
+          <button disabled={busy === "delete"} onClick={remove} className="rounded-full px-3 py-1 text-ember ring-1 ring-white/15 disabled:opacity-40">
+            {t("studioDelete")}
           </button>
           <Link to={`/publish/${slug}`} className="rounded-full bg-paper px-3 py-1 text-ink">
             {t("studioPublish")}

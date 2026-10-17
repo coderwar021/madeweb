@@ -16,6 +16,9 @@ class Settings:
     database_url: str | None = None
     apps_database_url: str | None = None
     admin_emails: set[str] = field(default_factory=set)
+    ai_api_key: str = ""
+    ai_base_url: str = ""
+    ai_model: str = ""
     fast_pipeline: bool = False
     bcrypt_rounds: int = 12
     cookie_secure: bool = False
@@ -57,6 +60,9 @@ class Settings:
             database_url=os.environ.get("DATABASE_URL") or None,
             apps_database_url=os.environ.get("APPS_DATABASE_URL") or None,
             admin_emails=admins,
+            ai_api_key=os.environ.get("AI_API_KEY", "").strip(),
+            ai_base_url=os.environ.get("AI_BASE_URL", "https://api.openai.com/v1").strip(),
+            ai_model=os.environ.get("AI_MODEL", "gpt-4o-mini").strip(),
             fast_pipeline=os.environ.get("PIPELINE_FAST") == "1",
             bcrypt_rounds=int(os.environ.get("BCRYPT_ROUNDS", "12")),
             cookie_secure=cookie_secure,

@@ -17,6 +17,7 @@ export function Publish() {
   const [live, setLive] = useState("");
   const [error, setError] = useState("");
   const [deployment, setDeployment] = useState("");
+  const [busy, setBusy] = useState("");
   const { t } = useI18n();
 
   useEffect(() => {
@@ -48,9 +49,26 @@ export function Publish() {
     }
   }
 
+  async function unpublish() {
+    if (!app) return;
+    setError("");
+    setBusy("unpublish");
+    try {
+      const result = await api(`/api/v1/apps/${app.id}/unpublish`, { method: "POST", body: {} });
+      setApp(result.app);
+      setLive("");
+      setDeployment("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("publishFailed"));
+    } finally {
+      setBusy("");
+    }
+  }
+
   async function publish() {
     if (!app || !target) return;
     setError("");
+    setBusy("publish");
     try {
       const result = await api(`/api/v1/apps/${app.id}/publish`, {
         method: "POST",
@@ -65,6 +83,8 @@ export function Publish() {
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : t("publishFailed"));
+    } finally {
+      setBusy("");
     }
   }
 
@@ -138,8 +158,13 @@ export function Publish() {
         </section>
       )}
       {target && (
-        <button onClick={publish} className="mt-6 rounded-full bg-paper px-5 py-2 text-ink">
+        <button disabled={busy === "publish"} onClick={publish} className="mt-6 rounded-full bg-paper px-5 py-2 text-ink disabled:opacity-40">
           {target === "platform" ? t("publishToPlatform") : t("publishToServer")}
+        </button>
+      )}
+      {app?.published && (
+        <button disabled={busy === "unpublish"} onClick={unpublish} className="ml-3 mt-6 rounded-full px-5 py-2 ring-1 ring-white/15 disabled:opacity-40">
+          {t("publishUnpublish")}
         </button>
       )}
       {error && <p className="mt-4 text-sm text-ember">{error}</p>}
