@@ -65,7 +65,9 @@ export function Build() {
             </Link>
           </div>
         )}
-        {(error || job?.status === "failed") && <p className="mt-8 text-sm text-ember">{error || job?.error}</p>}
+        {(error || job?.status === "failed") && (
+          <p className="mt-8 text-sm text-ember">{error || jobText(t, job?.error || "")}</p>
+        )}
       </main>
     </Frame>
   );

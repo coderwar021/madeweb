@@ -22,6 +22,8 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("PIPELINE_FAST", "1")
     monkeypatch.setenv("BCRYPT_ROUNDS", "4")
     monkeypatch.setenv("ADMIN_EMAILS", "admin@example.com")
+    for key in ("AI_API_KEY", "OPENAI_API_KEY", "AI_BASE_URL", "OPENAI_BASE_URL", "OPENAI_API_BASE", "AI_MODEL", "OPENAI_MODEL"):
+        monkeypatch.delenv(key, raising=False)
     application = create_app(Settings.from_env())
     with TestClient(application) as test_client:
         test_client.app_handle = application
@@ -687,3 +689,168 @@ def test_ssrf_redact_and_scan():
 
     report = security_scan(compile_schema(plan_create(PROMPT), 1))
     assert report["ok"], report["errors"]
+
+
+def _ai_settings(tmp_path):
+    from app.settings import Settings
+
+    settings = Settings.from_env()
+    settings.data_dir = tmp_path
+    settings.ai_api_key = "sk-test"
+    settings.ai_base_url = "https://gateway.example/v1"
+    settings.ai_model = "demo-model"
+    return settings
+
+
+def test_messy_model_json_is_used_instead_of_template(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    from app.ai import model
+    from app.ai.compile import compile_schema
+    from awp_schema import security_scan
+
+    remote = {
+        "schema": {
+            "name": "邻里菜摊",
+            "description": "卖时蔬",
+            "template": "generic",
+            "theme": {"primary": "1f4b99", "currency": "元"},
+            "entities": [
+                {
+                    "name": "蔬菜",
+                    "label": "蔬菜",
+                    "titleField": "名称",
+                    "fields": [
+                        {"name": "名称", "type": "string", "label": "名称", "required": True, "searchable": True},
+                        {"name": "价格", "type": "number", "label": "价格"},
+                        {"name": "图片", "type": "image", "label": "图片"},
+                    ],
+                }
+            ],
+            "pages": [
+                {
+                    "page": "首页",
+                    "route": "/",
+                    "components": [
+                        {"type": "hero", "title": "邻里菜摊", "subtitle": "卖时蔬"},
+                        {"type": "grid", "source": "蔬菜"},
+                        {"type": "Form", "entity": "蔬菜"},
+                    ],
+                }
+            ],
+        }
+    }
+    monkeypatch.setattr(model, "_chat", lambda settings, system, user: (remote, "ok"))
+    draft, source = model.create_draft(PROMPT, _ai_settings(tmp_path))
+    assert source == "model"
+    assert draft is not None
+    assert draft["name"] == "邻里菜摊"
+    assert draft["name"] != "东京二手市集"
+    assert draft["template"] == "generic"
+    assert draft["theme"]["currency"] == "CNY"
+    assert draft["entities"][0]["name"] == "Item"
+    assert "name" in draft["entities"][0]["fields"]
+    assert "price" in draft["entities"][0]["fields"]
+    assert draft["entities"][0]["fields"]["price"]["type"] == "decimal"
+    form = next(item for page in draft["pages"] for item in page["components"] if item["type"] == "Form")
+    assert form["mode"] == "create"
+    assert form["source"] == "Item"
+    assert security_scan(compile_schema(draft, 1))["ok"]
+
+
+def test_name_only_model_json_still_builds_a_site(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    from app.ai import model
+    from app.ai.compile import compile_schema
+    from awp_schema import security_scan
+
+    monkeypatch.setattr(model, "_chat", lambda settings, system, user: ({"name": "花店"}, "ok"))
+    draft, source = model.create_draft("做一个花店网站", _ai_settings(tmp_path))
+    assert source == "model"
+    assert draft["name"] == "花店"
+    assert draft["name"] != "东京二手市集"
+    assert {page["route"] for page in draft["pages"]} >= {"/", "/new", "/login"}
+    assert security_scan(compile_schema(draft, 1))["ok"]
+
+
+def test_configured_model_failure_does_not_use_template(client, monkeypatch):
+    from app.ai import model
+
+    client.app.state.settings.ai_api_key = "sk-test"
+    client.app.state.settings.ai_base_url = "https://gateway.example/v1"
+    client.app.state.settings.ai_model = "demo-model"
+    monkeypatch.setattr(model, "_chat", lambda settings, system, user: (None, "auth"))
+    session = register(client)
+    created = client.post("/api/v1/apps", json={"prompt": "做一个卖花的网站"}, headers=auth(session))
+    assert created.status_code == 200, created.text
+    job = client.get(f"/api/v1/jobs/{created.json()['jobId']}", headers=auth(session))
+    assert job.status_code == 200, job.text
+    body = job.json()
+    assert body["status"] == "failed"
+    assert "密钥" in body["error"]
+    assert body["result"] is None
+    health = client.get("/api/v1/health").json()["ai"]
+    assert health["configured"] is True
+    assert health["last"]["ok"] is False
+    assert health["last"]["reason"] == "auth"
+
+
+def test_chat_response_variants_are_parsed(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    import httpx
+    from app.ai import model
+    from app.ai.compile import compile_schema
+    from awp_schema import security_scan
+
+    payload = {
+        "name": "花店",
+        "description": "订花",
+        "entities": [{"name": "Bouquet", "label": "花束", "titleField": "title", "fields": {"title": {"type": "string", "label": "名称"}}}],
+        "pages": [{"page": "Home", "route": "/", "components": [{"type": "Hero", "title": "花店"}, {"type": "CardGrid", "source": "Bouquet"}]}],
+    }
+    replies = [
+        {"choices": [{"message": {"content": "```json\n" + json.dumps(payload, ensure_ascii=False) + "\n```"}}]},
+        {"choices": [{"message": {"content": None, "tool_calls": [{"function": {"arguments": json.dumps(payload, ensure_ascii=False)}}]}}]},
+        {"choices": [{"message": {"content": "<think>plan</think>\n" + json.dumps(payload, ensure_ascii=False) + ","}}]},
+    ]
+
+    class DummyResponse:
+        def __init__(self, data):
+            self.status_code = 200
+            self._data = data
+            self.text = json.dumps(data)
+
+        def json(self):
+            return self._data
+
+    class DummyClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, url, json=None, headers=None):
+            DummyClient.urls.append(url)
+            data = replies.pop(0)
+            return DummyResponse(data)
+
+    DummyClient.urls = []
+    monkeypatch.setattr(httpx, "Client", DummyClient)
+    settings = _ai_settings(tmp_path)
+    for _ in range(3):
+        draft, source = model.create_draft("做一个花店", settings)
+        assert source == "model"
+        assert draft["name"] == "花店"
+        assert security_scan(compile_schema(draft, 1))["ok"], draft
+    assert any(item.endswith("/v1/chat/completions") for item in DummyClient.urls)
+
+
+def test_completion_urls_add_v1_when_missing():
+    from app.ai.model import _completion_urls
+
+    assert _completion_urls("https://api.openai.com/v1") == ["https://api.openai.com/v1/chat/completions"]
+    assert _completion_urls("https://gateway.example")[1] == "https://gateway.example/v1/chat/completions"
+    assert _completion_urls("https://gateway.example/chat/completions")[1] == "https://gateway.example/v1/chat/completions"

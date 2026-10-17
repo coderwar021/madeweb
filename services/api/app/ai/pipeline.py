@@ -8,7 +8,7 @@ import time
 from sqlalchemy import func, select
 
 from app.ai.compile import compile_schema
-from app.ai.model import create_draft, edit_draft, explain_source
+from app.ai.model import create_draft, edit_draft, explain_failure, explain_source
 from app.ai.planner import slug_base
 from app.ai.seed import seed_marketplace
 from app.models import Application, AppVersion, GenerationJob
@@ -71,6 +71,9 @@ def _create(platform, apps, settings: Settings, job: GenerationJob, app: Applica
     _beat(platform, settings, job, "intent", "done")
     _beat(platform, settings, job, "database", "running")
     draft, source = create_draft(job.prompt, settings)
+    if draft is None:
+        _fail(platform, job, "database", explain_failure(source))
+        return
     _beat(platform, settings, job, "database", "done")
     _beat(platform, settings, job, "interface", "running")
     if not draft.get("pages"):

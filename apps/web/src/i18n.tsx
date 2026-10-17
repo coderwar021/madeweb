@@ -99,6 +99,13 @@ const zh = {
   savedByLocalNetwork: "连不上模型接口，已用本地模板保存为 v1",
   savedByLocalFormat: "模型没有返回网站定义，已用本地模板保存为 v1",
   savedByLocalSchema: "模型返回的内容没有通过校验，已用本地模板保存为 v1",
+  generateFailAuth: "密钥或模型名不被网关接受，没有生成网站。请检查 AI_API_KEY、AI_BASE_URL 和 AI_MODEL。",
+  generateFailHttp: "模型接口返回了错误，没有生成网站。请检查 AI_API_KEY、AI_BASE_URL 和 AI_MODEL。",
+  generateFailNetwork: "连不上模型接口，没有生成网站。请检查 AI_API_KEY、AI_BASE_URL 和 AI_MODEL。",
+  generateFailFormat: "模型没有返回网站定义，没有生成网站。请检查 AI_API_KEY、AI_BASE_URL 和 AI_MODEL。",
+  generateFailSchema: "模型返回的内容没有通过校验，没有生成网站。请检查 AI_API_KEY、AI_BASE_URL 和 AI_MODEL。",
+  generateFailUnset: "没有配置密钥，没有生成网站。请检查 AI_API_KEY、AI_BASE_URL 和 AI_MODEL。",
+  generateFail: "模型没有返回可用结果，没有生成网站。请检查 AI_API_KEY、AI_BASE_URL 和 AI_MODEL。",
   addedFeatures: "已添加{names}",
   alreadyThere: "这个功能已经在当前版本里了。",
   cannotEdit: "我还不能安全地实现这个修改。可以试试：增加收藏、评论、订单或搜索。",
@@ -294,6 +301,13 @@ const ja: { [K in keyof typeof zh]: string } = {
   savedByLocalNetwork: "モデル API に接続できず、ローカル雛形で v1 を保存しました",
   savedByLocalFormat: "モデルがサイト定義を返さず、ローカル雛形で v1 を保存しました",
   savedByLocalSchema: "モデルの結果が検査を通らず、ローカル雛形で v1 を保存しました",
+  generateFailAuth: "鍵またはモデル名が受け付けられず、サイトを生成できませんでした。AI_API_KEY、AI_BASE_URL、AI_MODEL を確認してください。",
+  generateFailHttp: "モデル API がエラーを返し、サイトを生成できませんでした。AI_API_KEY、AI_BASE_URL、AI_MODEL を確認してください。",
+  generateFailNetwork: "モデル API に接続できず、サイトを生成できませんでした。AI_API_KEY、AI_BASE_URL、AI_MODEL を確認してください。",
+  generateFailFormat: "モデルがサイト定義を返さず、サイトを生成できませんでした。AI_API_KEY、AI_BASE_URL、AI_MODEL を確認してください。",
+  generateFailSchema: "モデルの結果が検査を通らず、サイトを生成できませんでした。AI_API_KEY、AI_BASE_URL、AI_MODEL を確認してください。",
+  generateFailUnset: "鍵が設定されていないため、サイトを生成できませんでした。AI_API_KEY、AI_BASE_URL、AI_MODEL を確認してください。",
+  generateFail: "モデルから使える結果がなく、サイトを生成できませんでした。AI_API_KEY、AI_BASE_URL、AI_MODEL を確認してください。",
   addedFeatures: "{names}を追加しました",
   alreadyThere: "この機能は今のバージョンにすでにあります。",
   cannotEdit: "この変更は安全に実装できません。お気に入り、コメント、注文、検索を試してください。",
@@ -489,6 +503,13 @@ const en: { [K in keyof typeof zh]: string } = {
   savedByLocalNetwork: "Could not reach the model API. Saved the local template as v1",
   savedByLocalFormat: "The model did not return a site definition. Saved the local template as v1",
   savedByLocalSchema: "The model result failed validation. Saved the local template as v1",
+  generateFailAuth: "The gateway rejected the key or model name, so no site was generated. Check AI_API_KEY, AI_BASE_URL, and AI_MODEL.",
+  generateFailHttp: "The model API returned an error, so no site was generated. Check AI_API_KEY, AI_BASE_URL, and AI_MODEL.",
+  generateFailNetwork: "Could not reach the model API, so no site was generated. Check AI_API_KEY, AI_BASE_URL, and AI_MODEL.",
+  generateFailFormat: "The model did not return a site definition, so no site was generated. Check AI_API_KEY, AI_BASE_URL, and AI_MODEL.",
+  generateFailSchema: "The model result failed validation, so no site was generated. Check AI_API_KEY, AI_BASE_URL, and AI_MODEL.",
+  generateFailUnset: "No API key is configured, so no site was generated. Check AI_API_KEY, AI_BASE_URL, and AI_MODEL.",
+  generateFail: "The model did not return a usable site, so nothing was generated. Check AI_API_KEY, AI_BASE_URL, and AI_MODEL.",
   addedFeatures: "Added {names}",
   alreadyThere: "That feature is already in this version.",
   cannotEdit: "That change cannot be made safely. Try adding favorites, comments, orders, or search.",
@@ -857,6 +878,13 @@ export function jobText(t: (key: MessageKey, vars?: Record<string, string | numb
   if (message === "模型没有返回网站定义，已用本地模板保存为 v1") return t("savedByLocalFormat");
   if (message === "模型返回的内容没有通过校验，已用本地模板保存为 v1") return t("savedByLocalSchema");
   if (message.endsWith("已用本地模板保存为 v1")) return t("savedByLocalFallback");
+  if (message.startsWith("密钥或模型名不被网关接受，没有生成网站")) return t("generateFailAuth");
+  if (message.startsWith("模型接口返回了错误，没有生成网站")) return t("generateFailHttp");
+  if (message.startsWith("连不上模型接口，没有生成网站")) return t("generateFailNetwork");
+  if (message.startsWith("模型没有返回网站定义，没有生成网站")) return t("generateFailFormat");
+  if (message.startsWith("模型返回的内容没有通过校验，没有生成网站")) return t("generateFailSchema");
+  if (message.startsWith("没有配置密钥，没有生成网站")) return t("generateFailUnset");
+  if (message.includes("没有生成网站")) return t("generateFail");
   if (message === "这个功能已经在当前版本里了。") return t("alreadyThere");
   if (message === "已按你的说明更新") return t("studioHint");
   if (message.startsWith("我还不能安全地实现这个修改")) return t("cannotEdit");
