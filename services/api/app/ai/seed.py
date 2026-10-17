@@ -18,6 +18,45 @@ PRODUCTS = (
 )
 
 
+def seed_chat(apps, settings: Settings, app_id: str) -> None:
+    now = utcnow()
+    host = AppUser(
+        id=new_id(),
+        app_id=app_id,
+        email=f"host-{app_id[:8]}@users.invalid",
+        name="林夏",
+        password_hash=hash_password(secrets.token_urlsafe(24), settings.bcrypt_rounds),
+        role="user",
+        created_at=now,
+    )
+    apps.add(host)
+    rooms = (("大厅", "进来打个招呼。"), ("夜班", "下班后随便聊聊。"))
+    for title, topic in rooms:
+        room_id = new_id()
+        apps.add(
+            Record(
+                id=room_id,
+                app_id=app_id,
+                entity="Room",
+                data=dumps({"title": title, "topic": topic, "ownerId": host.id}),
+                owner_id=host.id,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        apps.add(
+            Record(
+                id=new_id(),
+                app_id=app_id,
+                entity="Message",
+                data=dumps({"body": "房间已经开了。", "authorId": host.id, "roomId": room_id}),
+                owner_id=host.id,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+
+
 def seed_marketplace(apps, settings: Settings, app_id: str) -> None:
     now = utcnow()
     seller = AppUser(

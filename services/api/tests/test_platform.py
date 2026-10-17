@@ -310,6 +310,12 @@ def test_locale_prompts_and_edit_words():
     assert plan_create(japanese)["template"] == "marketplace"
     assert plan_create(english)["template"] == "marketplace"
     assert plan_create(japanese)["name"].startswith("东京")
+    chat = plan_create("做一个聊天网站")
+    assert chat["template"] == "chat"
+    assert {item["name"] for item in chat["entities"]} == {"Room", "Message"}
+    assert "Product" not in {item["name"] for item in chat["entities"]}
+    assert any(page.get("ui") for page in chat["pages"])
+    assert "上架" not in json.dumps(chat, ensure_ascii=False)
     assert _city("東京都の中古マーケット") == "东京"
     assert _city("京都のフリマ") == "京都"
 
@@ -846,6 +852,38 @@ def test_chat_response_variants_are_parsed(tmp_path, monkeypatch):
         assert draft["name"] == "花店"
         assert security_scan(compile_schema(draft, 1))["ok"], draft
     assert any(item.endswith("/v1/chat/completions") for item in DummyClient.urls)
+
+
+def test_chat_prompt_does_not_become_a_store(client):
+    session = register(client)
+    job = create_site(client, session, "做一个聊天网站")
+    site = client.get(f"/api/v1/sites/{job['result']['slug']}").json()
+    schema = site["schema"]
+    names = {item["name"] for item in schema["entities"]}
+    raw = json.dumps(schema, ensure_ascii=False)
+    assert schema["template"] == "chat"
+    assert names == {"Room", "Message"}
+    assert "Product" not in names
+    assert "price" not in raw
+    assert any(page.get("ui") for page in schema["pages"])
+    rooms = client.get(f"/api/v1/runtime/{site['app']['id']}/entities/Room")
+    assert rooms.status_code == 200, rooms.text
+    assert rooms.json()["total"] >= 1
+
+
+def test_model_shop_schema_is_rejected_for_chat_prompt(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    from app.ai import model
+    from app.ai.planner import marketplace_schema
+    from app.ai.compile import compile_schema
+    from awp_schema import security_scan
+
+    monkeypatch.setattr(model, "_chat", lambda settings, system, user: (marketplace_schema("东京二手"), "ok"))
+    draft, source = model.create_draft("做一个聊天网站", _ai_settings(tmp_path))
+    assert source == "model"
+    assert draft["template"] == "chat"
+    assert {item["name"] for item in draft["entities"]} == {"Room", "Message"}
+    assert security_scan(compile_schema(draft, 1))["ok"]
 
 
 def test_completion_urls_add_v1_when_missing():

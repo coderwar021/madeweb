@@ -113,7 +113,7 @@ def validate_schema(schema: Any) -> list[str]:
     if not isinstance(description, str) or len(description) > 200:
         errors.append("description is invalid")
     template = schema.get("template", "generic")
-    if template not in {"marketplace", "blog", "booking", "generic"}:
+    if template not in {"marketplace", "blog", "booking", "chat", "generic"}:
         errors.append("unknown template")
     if schema.get("workflows") not in ([], None) and schema.get("workflows") != []:
         if not isinstance(schema.get("workflows"), list):
@@ -263,11 +263,92 @@ def _validate_permissions(perms: Any, names: set[str], errors: list[str]) -> Non
             errors.append("permission scope is invalid")
 
 
+UI_TAGS = {
+    "div",
+    "section",
+    "header",
+    "main",
+    "footer",
+    "nav",
+    "h1",
+    "h2",
+    "h3",
+    "p",
+    "span",
+    "ul",
+    "ol",
+    "li",
+    "article",
+    "button",
+    "input",
+    "textarea",
+    "label",
+    "form",
+    "img",
+    "a",
+}
+UI_KEYS = {
+    "tag",
+    "text",
+    "children",
+    "style",
+    "bind",
+    "entity",
+    "field",
+    "href",
+    "srcField",
+    "submit",
+    "placeholder",
+    "className",
+}
+UI_BINDS = {"list", "form", "detail", "auth", "nav", "search"}
+STYLE_KEYS = {
+    "color",
+    "background",
+    "backgroundColor",
+    "padding",
+    "margin",
+    "gap",
+    "display",
+    "flexDirection",
+    "justifyContent",
+    "alignItems",
+    "width",
+    "maxWidth",
+    "minHeight",
+    "height",
+    "borderRadius",
+    "fontSize",
+    "fontWeight",
+    "lineHeight",
+    "letterSpacing",
+    "textAlign",
+    "border",
+    "borderTop",
+    "borderBottom",
+    "boxShadow",
+    "overflow",
+    "overflowY",
+    "gridTemplateColumns",
+    "opacity",
+    "flex",
+    "flexWrap",
+    "whiteSpace",
+    "position",
+    "top",
+    "bottom",
+    "left",
+    "right",
+}
+STYLE_VALUE_RE = re.compile(r"^[a-zA-Z0-9#%,.\s\-()/]+$")
+CLASS_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_-]{0,40}$")
+
+
 def _validate_page(page: Any, names: set[str], fields: dict[str, dict], routes: set[str], errors: list[str]) -> None:
     if not isinstance(page, dict):
         errors.append("page must be an object")
         return
-    if set(page) - {"page", "id", "title", "route", "layout", "components"}:
+    if set(page) - {"page", "id", "title", "route", "layout", "components", "ui"}:
         errors.append("page has unknown keys")
     route = page.get("route")
     if not isinstance(route, str) or not ROUTE_RE.match(route) or ".." in route:
@@ -282,8 +363,19 @@ def _validate_page(page: Any, names: set[str], fields: dict[str, dict], routes: 
     if not isinstance(title, str) or len(title) > 40:
         errors.append("page title is invalid")
     components = page.get("components")
+    ui = page.get("ui")
+    if ui is not None:
+        _validate_ui(ui, names, errors, 0, 0)
+    if components is None:
+        components = []
+        if ui is None:
+            errors.append("page components are invalid")
+            return
     if not isinstance(components, list) or len(components) > 12:
         errors.append("page components are invalid")
+        return
+    if not components and ui is None:
+        errors.append("pages are required")
         return
     for component in components:
         if not isinstance(component, dict) or component.get("type") not in COMPONENTS:
@@ -312,6 +404,70 @@ def _validate_page(page: Any, names: set[str], fields: dict[str, dict], routes: 
         if component["type"] == "Hero":
             if not component.get("title"):
                 errors.append("hero title is required")
+
+
+def _validate_ui(node: Any, names: set[str], errors: list[str], depth: int, count: int) -> int:
+    if depth > 10:
+        errors.append("ui tree is too deep")
+        return count
+    if count > 80:
+        errors.append("ui tree is too large")
+        return count
+    if not isinstance(node, dict):
+        errors.append("ui node must be an object")
+        return count + 1
+    extra = set(node) - UI_KEYS
+    if extra:
+        errors.append("ui has unknown keys: " + ", ".join(sorted(extra)))
+    tag = node.get("tag", "div")
+    if tag not in UI_TAGS:
+        errors.append(f"ui tag is not allowed: {tag!r}")
+    bind = node.get("bind")
+    if bind is not None and bind not in UI_BINDS:
+        errors.append("ui bind is invalid")
+    if bind in {"list", "form", "detail"} and node.get("entity") not in names:
+        errors.append("ui bind references unknown entity")
+    for key in ("text", "placeholder"):
+        value = node.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, str) or len(value) > 120:
+            errors.append(f"ui.{key} is invalid")
+    if node.get("field") is not None and (not isinstance(node.get("field"), str) or not FIELD_RE.match(str(node.get("field")))):
+        errors.append("ui field is invalid")
+    if node.get("srcField") is not None and (not isinstance(node.get("srcField"), str) or not FIELD_RE.match(str(node.get("srcField")))):
+        errors.append("ui srcField is invalid")
+    href = node.get("href")
+    if href is not None and (not isinstance(href, str) or not ROUTE_RE.match(href) or ".." in href):
+        errors.append("ui href is invalid")
+    class_name = node.get("className")
+    if class_name is not None and (not isinstance(class_name, str) or not CLASS_RE.match(class_name)):
+        errors.append("ui className is invalid")
+    if node.get("submit") not in {None, True, False}:
+        errors.append("ui submit is invalid")
+    style = node.get("style")
+    if style is not None:
+        if not isinstance(style, dict) or len(style) > 24:
+            errors.append("ui style is invalid")
+        else:
+            extra_style = set(style) - STYLE_KEYS
+            if extra_style:
+                errors.append("ui style has unknown keys")
+            for value in style.values():
+                if not isinstance(value, str) or len(value) > 80 or not STYLE_VALUE_RE.match(value):
+                    errors.append("ui style value is invalid")
+                elif "url" in value.lower() or "expression" in value.lower() or "javascript" in value.lower():
+                    errors.append("ui style value is unsafe")
+    children = node.get("children")
+    next_count = count + 1
+    if children is None:
+        return next_count
+    if not isinstance(children, list) or len(children) > 16:
+        errors.append("ui children are invalid")
+        return next_count
+    for child in children:
+        next_count = _validate_ui(child, names, errors, depth + 1, next_count)
+    return next_count
 
 
 def _validate_nav(nav: Any, routes: set[str], errors: list[str]) -> None:

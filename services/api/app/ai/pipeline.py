@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from app.ai.compile import compile_schema
 from app.ai.model import create_draft, edit_draft, explain_failure, explain_source
 from app.ai.planner import slug_base
-from app.ai.seed import seed_marketplace
+from app.ai.seed import seed_chat, seed_marketplace
 from app.models import Application, AppVersion, GenerationJob
 from app.settings import Settings
 from app.util import dumps, loads, new_id, utcnow
@@ -97,6 +97,8 @@ def _create(platform, apps, settings: Settings, job: GenerationJob, app: Applica
     app.updated_at = utcnow()
     if schema["template"] == "marketplace":
         seed_marketplace(apps, settings, app.id)
+    if schema["template"] == "chat":
+        seed_chat(apps, settings, app.id)
     _succeed(platform, settings, job, app, 1, report, explain_source(source), source)
 
 

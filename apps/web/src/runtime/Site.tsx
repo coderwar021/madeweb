@@ -3,11 +3,12 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { LanguageSwitch, statusText, translateLabel, useI18n, type Locale } from "../i18n";
 import { appApi, bootApp, uploadFile, type AppUser } from "./api";
+import { GeneratedUi, hasUi } from "./GeneratedUi";
 
 type Field = { type: string; label: string; required?: boolean; values?: string[]; target?: string; auto?: string; default?: string };
 type Entity = { name: string; label: string; titleField: string; fields: Record<string, Field> };
 type Component = { type: string; title?: string; subtitle?: string; entity?: string; placeholder?: string; field?: string; source?: string; mode?: string };
-type Page = { page: string; route: string; components: Component[] };
+type Page = { page: string; route: string; components: Component[]; ui?: import("./GeneratedUi").UiNode };
 type Schema = {
   name: string;
   entities: Entity[];
@@ -53,7 +54,7 @@ export function Site() {
   const path = `/${rest || ""}`.replace(/\/$/, "") || "/";
   const matched = matchPage(meta.schema.pages, path === "" ? "/" : path);
   const theme = meta.schema.theme;
-  const login = meta.schema.pages.find((page) => page.components.some((item) => item.type === "AuthForm"))?.route || "/login";
+  const login = meta.schema.pages.find((page) => (page.components || []).some((item) => item.type === "AuthForm") || page.route === "/login")?.route || "/login";
 
   function href(route: string) {
     const params = new URLSearchParams();
@@ -61,6 +62,21 @@ export function Site() {
     if (embed) params.set("embed", "1");
     const qs = params.toString();
     return `/s/${slug}${route === "/" ? "" : route}${qs ? `?${qs}` : ""}`;
+  }
+
+  if (matched && hasUi(matched.page)) {
+    return (
+      <div style={{ fontFamily: '"Noto Sans SC", "Noto Sans JP", sans-serif' }}>
+        {meta.app.status === "disabled" && <p className="bg-black px-4 py-2 text-center text-sm text-white">{t("siteDisabled")}</p>}
+        {meta.app.owner && !embed && (
+          <div className="flex justify-end gap-3 px-4 py-2 text-xs">
+            <LanguageSwitch tone="light" />
+            <Link to={`/studio/${slug}`}>{t("siteBackStudio")}</Link>
+          </div>
+        )}
+        <GeneratedUi meta={meta} page={matched.page} params={matched.params} me={me} setMe={setMe} draft={draft} href={href} />
+      </div>
+    );
   }
 
   return (

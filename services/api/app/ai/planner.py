@@ -26,7 +26,13 @@ def _city(prompt: str) -> str:
 
 def detect_template(prompt: str) -> str:
     text = sanitize_prompt(prompt).lower()
-    if any(word in text for word in ("二手", "闲置", "商品", "marketplace", "classified", "市集", "中古", "フリマ", "マーケット")):
+    if any(word in text for word in ("聊天", "聊天室", "群聊", "私信", "私聊", "即时通讯", "messenger", "chatroom", "チャット", "对话频道")):
+        return "chat"
+    if re.search(r"(?<![a-z])chat(?![a-z])", text):
+        return "chat"
+    if any(word in text for word in ("二手", "闲置", "市集", "买卖", "出售", "电商", "购物", "商店", "卖家", "marketplace", "classified", "中古", "フリマ", "マーケット")):
+        return "marketplace"
+    if any(word in text for word in ("商品",)) and any(word in text for word in ("交易", "卖", "买", "市场", "shop", "store")):
         return "marketplace"
     if any(word in text for word in ("预约", "订位", "booking", "reservation", "挂号", "予約")):
         return "booking"
@@ -42,18 +48,22 @@ def slug_base(schema: dict) -> str:
         return "field-notes"
     if schema.get("template") == "booking":
         return "booking"
+    if schema.get("template") == "chat":
+        return "chat"
     return "app"
 
 
 def plan_create(prompt: str) -> dict:
     kind = detect_template(prompt)
     if kind == "marketplace":
-        return marketplace_schema(prompt)
+        return paint_schema(marketplace_schema(prompt))
+    if kind == "chat":
+        return paint_schema(chat_schema(prompt))
     if kind == "booking":
-        return booking_schema(prompt)
+        return paint_schema(booking_schema(prompt))
     if kind == "blog":
-        return blog_schema(prompt)
-    return generic_schema(prompt)
+        return paint_schema(blog_schema(prompt))
+    return paint_schema(generic_schema(prompt))
 
 
 def _mentions(text: str, word: str) -> bool:
@@ -174,6 +184,66 @@ def marketplace_schema(prompt: str) -> dict:
             {"label": "消息", "route": "/messages"},
             {"label": "订单", "route": "/orders"},
         ],
+    }
+
+
+def chat_schema(prompt: str) -> dict:
+    topic = _topic(prompt)
+    name = "夜聊"
+    if topic and not topic.startswith("做") and "聊天" not in topic and "chat" not in topic.lower():
+        name = topic
+    tagline = "进房间说话，消息留在房间里。"
+    return {
+        "name": name[:40],
+        "description": tagline,
+        "template": "chat",
+        "theme": _theme("#5b8def", "#0f1419", name[:24], tagline, "CNY"),
+        "entities": [
+            _entity(
+                "Room",
+                "房间",
+                "public",
+                "title",
+                {
+                    "title": _string("房间名", required=True, searchable=True),
+                    "topic": _text("简介"),
+                    "ownerId": _user("创建者"),
+                },
+            ),
+            _entity(
+                "Message",
+                "消息",
+                "public",
+                "body",
+                {
+                    "body": _text("内容", required=True),
+                    "authorId": _user("作者"),
+                    "roomId": _relation("房间", "Room", required=True),
+                },
+            ),
+        ],
+        "pages": [
+            _page(
+                "Home",
+                "/",
+                [
+                    {"type": "Hero", "title": name[:80], "subtitle": tagline},
+                    {"type": "CardGrid", "source": "Room"},
+                    {"type": "Form", "source": "Room", "mode": "create"},
+                ],
+            ),
+            _page(
+                "Room",
+                "/rooms/:id",
+                [
+                    {"type": "Detail", "source": "Room"},
+                    {"type": "Comment", "source": "Message"},
+                    {"type": "Form", "source": "Message", "mode": "create"},
+                ],
+            ),
+            _page("Login", "/login", [{"type": "AuthForm"}]),
+        ],
+        "nav": [{"label": "房间", "route": "/"}, {"label": "登录", "route": "/login"}],
     }
 
 
@@ -383,7 +453,7 @@ def _add_search(schema: dict) -> bool:
 
 
 def _public_target(schema: dict) -> str | None:
-    for name in ("Product", "Entry", "Post", "Service"):
+    for name in ("Product", "Entry", "Post", "Service", "Room"):
         for entity in schema.get("entities", []):
             if entity["name"] == name and entity.get("access") == "public":
                 return name
@@ -482,3 +552,247 @@ def _user_ref(label: str, required: bool = False, participant: bool = False) -> 
     if participant:
         spec["participant"] = True
     return spec
+
+
+def fits_intent(intent: str, schema: dict) -> bool:
+    names = {item.get("name") for item in schema.get("entities") or [] if isinstance(item, dict)}
+    template = schema.get("template")
+    if intent == "chat":
+        return bool(names & {"Room", "Message", "Chat"}) and "Product" not in names and template != "marketplace"
+    if intent == "blog":
+        return template != "marketplace" and "Product" not in names
+    if intent == "booking":
+        return template != "marketplace" and "Product" not in names
+    if intent == "marketplace":
+        return True
+    return template != "marketplace"
+
+
+def merge_identity(base: dict, overlay: dict) -> dict:
+    merged = copy.deepcopy(base)
+    name = overlay.get("name")
+    if isinstance(name, str) and name.strip() and name not in {"东京二手市集", "未命名网站"}:
+        merged["name"] = name[:40]
+        merged["theme"]["logo"] = name[:24]
+    description = overlay.get("description")
+    if isinstance(description, str) and description.strip() and "二手" not in description:
+        merged["description"] = description[:200]
+        merged["theme"]["tagline"] = description[:80]
+    theme = overlay.get("theme") if isinstance(overlay.get("theme"), dict) else {}
+    for key in ("primary", "background", "ink"):
+        value = theme.get(key)
+        if isinstance(value, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", value):
+            merged["theme"][key] = value
+    return paint_schema(merged)
+
+
+def paint_schema(schema: dict) -> dict:
+    painted = copy.deepcopy(schema)
+    theme = painted.get("theme") or {}
+    name = painted.get("name") or "网站"
+    tagline = theme.get("tagline") or painted.get("description") or ""
+    primary = theme.get("primary") or "#1f4b99"
+    background = theme.get("background") or "#f7f6f3"
+    ink = theme.get("ink") or "#1c1917"
+    template = painted.get("template") or "generic"
+    entities = {item["name"]: item for item in painted.get("entities") or []}
+    for page in painted.get("pages") or []:
+        route = page.get("route")
+        if template == "chat":
+            page["ui"] = _ui_chat(name, tagline, primary, background, route)
+        elif template == "marketplace":
+            page["ui"] = _ui_market(name, tagline, primary, background, ink, route)
+        elif template == "blog":
+            source = "Post" if "Post" in entities else next(iter(entities), "Entry")
+            page["ui"] = _ui_blog(name, tagline, primary, background, ink, route, source, _detail_route(painted, source))
+        elif template == "booking":
+            page["ui"] = _ui_booking(name, tagline, primary, background, ink, route)
+        else:
+            source = next((item for item in ("Entry", "Post", "Item") if item in entities), next(iter(entities), "Entry"))
+            page["ui"] = _ui_generic(name, tagline, primary, background, ink, route, source, _detail_route(painted, source))
+    return painted
+
+
+def _node(tag: str, **kwargs) -> dict:
+    node = {"tag": tag}
+    node.update({key: value for key, value in kwargs.items() if value is not None})
+    return node
+
+
+def _ui_chat(name: str, tagline: str, primary: str, background: str, route: str) -> dict:
+    shell = {"minHeight": "100vh", "background": background, "color": "#e8e6e3", "display": "flex", "flexDirection": "column"}
+    if route == "/login":
+        return _node("div", style=shell, children=[_ui_auth(primary)])
+    if route == "/rooms/:id":
+        return _node(
+            "div",
+            style={**shell, "height": "100vh"},
+            children=[
+                _node(
+                    "header",
+                    bind="detail",
+                    entity="Room",
+                    style={"padding": "16px 24px", "borderBottom": "1px solid rgba(255,255,255,0.08)", "display": "flex", "justifyContent": "space-between"},
+                    children=[
+                        _node("a", href="/", text="房间", style={"color": "#e8e6e3"}),
+                        _node("h1", field="title", style={"fontSize": "20px"}),
+                    ],
+                ),
+                _node(
+                    "main",
+                    bind="list",
+                    entity="Message",
+                    style={"flex": "1", "overflowY": "auto", "padding": "16px 24px", "display": "flex", "flexDirection": "column", "gap": "12px"},
+                    children=[
+                        _node(
+                            "article",
+                            style={"background": "#1a222c", "padding": "12px 16px", "borderRadius": "16px", "maxWidth": "640px"},
+                            children=[
+                                _node("span", field="authorId", style={"opacity": "0.6", "fontSize": "12px"}),
+                                _node("p", field="body", style={"margin": "6px 0 0 0", "whiteSpace": "pre-wrap"}),
+                            ],
+                        )
+                    ],
+                ),
+                _node(
+                    "form",
+                    bind="form",
+                    entity="Message",
+                    style={"display": "flex", "gap": "8px", "padding": "16px 24px", "borderTop": "1px solid rgba(255,255,255,0.08)"},
+                    children=[
+                        _node("textarea", field="body", placeholder="写一条消息", style={"flex": "1", "minHeight": "48px", "borderRadius": "12px", "padding": "12px", "border": "0"}),
+                        _node("button", submit=True, text="发送", style={"background": primary, "color": "#fff", "border": "0", "borderRadius": "12px", "padding": "12px 18px"}),
+                    ],
+                ),
+            ],
+        )
+    return _node(
+        "div",
+        style=shell,
+        children=[
+            _node(
+                "header",
+                style={"padding": "32px 24px 8px 24px"},
+                children=[
+                    _node("h1", text=name[:40], style={"fontSize": "36px"}),
+                    _node("p", text=tagline[:80], style={"opacity": "0.7"}),
+                    _node("nav", bind="nav", style={"display": "flex", "gap": "16px", "margin": "16px 0 0 0"}),
+                ],
+            ),
+            _node(
+                "main",
+                style={"padding": "8px 24px 40px 24px", "maxWidth": "720px", "display": "flex", "flexDirection": "column", "gap": "16px"},
+                children=[
+                    _node(
+                        "div",
+                        bind="list",
+                        entity="Room",
+                        style={"display": "flex", "flexDirection": "column", "gap": "12px"},
+                        children=[
+                            _node(
+                                "a",
+                                href="/rooms/:id",
+                                style={"display": "block", "background": "#1a222c", "padding": "16px", "borderRadius": "16px", "color": "#e8e6e3"},
+                                children=[
+                                    _node("h2", field="title", style={"fontSize": "18px"}),
+                                    _node("p", field="topic", style={"opacity": "0.65", "margin": "6px 0 0 0"}),
+                                ],
+                            )
+                        ],
+                    ),
+                    _node(
+                        "form",
+                        bind="form",
+                        entity="Room",
+                        style={"display": "flex", "flexDirection": "column", "gap": "8px", "background": "#1a222c", "padding": "16px", "borderRadius": "16px"},
+                        children=[
+                            _node("input", field="title", placeholder="新房间名", style={"padding": "12px", "borderRadius": "12px", "border": "0"}),
+                            _node("input", field="topic", placeholder="这间房聊什么", style={"padding": "12px", "borderRadius": "12px", "border": "0"}),
+                            _node("button", submit=True, text="创建房间", style={"background": primary, "color": "#fff", "border": "0", "borderRadius": "12px", "padding": "12px"}),
+                        ],
+                    ),
+                ],
+            ),
+        ],
+    )
+
+
+def _ui_market(name: str, tagline: str, primary: str, background: str, ink: str, route: str) -> dict:
+    shell = {"minHeight": "100vh", "background": background, "color": ink}
+    if route == "/login":
+        return _node("div", style=shell, children=[_ui_auth(primary)])
+    if route == "/sell":
+        return _node("div", style={**shell, "padding": "32px"}, children=[_node("form", bind="form", entity="Product", children=_form_fields("上架商品", primary))])
+    if route.startswith("/products/"):
+        return _node("div", style={**shell, "padding": "32px"}, children=[_node("article", bind="detail", entity="Product", children=[_node("img", srcField="images"), _node("h1", field="title"), _node("p", field="price"), _node("p", field="description")])])
+    bind = "Product"
+    if route == "/favorites":
+        bind = "Favorite"
+    if route == "/messages":
+        bind = "Message"
+    if route == "/orders":
+        bind = "Order"
+    if route in {"/favorites", "/messages", "/orders"}:
+        return _node("div", style={**shell, "padding": "32px"}, children=[_node("div", bind="list", entity=bind, children=[_node("p", field="title")])])
+    return _node(
+        "div",
+        style=shell,
+        children=[
+            _node("header", style={"padding": "24px"}, children=[_node("h1", text=name[:40]), _node("p", text=tagline[:80]), _node("nav", bind="nav")]),
+            _node("main", style={"padding": "0 24px 40px 24px"}, children=[_node("div", bind="search", entity="Product"), _node("div", bind="list", entity="Product", style={"display": "grid", "gridTemplateColumns": "1fr 1fr 1fr", "gap": "16px"}, children=[_node("a", href="/products/:id", style={"background": "#fff", "borderRadius": "24px", "overflow": "hidden"}, children=[_node("img", srcField="images"), _node("h2", field="title"), _node("p", field="price")])])]),
+        ],
+    )
+
+
+def _detail_route(schema: dict, source: str) -> str:
+    for page in schema.get("pages") or []:
+        if ":id" not in str(page.get("route") or ""):
+            continue
+        for component in page.get("components") or []:
+            if component.get("type") == "Detail" and component.get("source") == source:
+                return page["route"]
+    return f"/{source.lower()}s/:id"
+
+
+def _ui_blog(name: str, tagline: str, primary: str, background: str, ink: str, route: str, source: str, detail: str) -> dict:
+    shell = {"minHeight": "100vh", "background": background, "color": ink, "maxWidth": "720px", "padding": "32px"}
+    if route == "/login":
+        return _node("div", style=shell, children=[_ui_auth(primary)])
+    if route == "/new":
+        return _node("div", style=shell, children=[_node("form", bind="form", entity=source, children=_form_fields("写下这篇", primary))])
+    if ":id" in route:
+        return _node("div", style=shell, children=[_node("article", bind="detail", entity=source, children=[_node("h1", field="title"), _node("p", field="body")])])
+    return _node("div", style=shell, children=[_node("h1", text=name[:40]), _node("p", text=tagline[:80]), _node("nav", bind="nav"), _node("div", bind="list", entity=source, children=[_node("a", href=detail, children=[_node("h2", field="title"), _node("p", field="body")])])])
+
+
+def _ui_booking(name: str, tagline: str, primary: str, background: str, ink: str, route: str) -> dict:
+    shell = {"minHeight": "100vh", "background": background, "color": ink, "padding": "32px"}
+    if route == "/login":
+        return _node("div", style=shell, children=[_ui_auth(primary)])
+    if route == "/book":
+        return _node("div", style=shell, children=[_node("form", bind="form", entity="Appointment", children=_form_fields("预约", primary))])
+    if ":id" in route:
+        return _node("div", style=shell, children=[_node("article", bind="detail", entity="Service", children=[_node("h1", field="title"), _node("p", field="description")])])
+    return _node("div", style=shell, children=[_node("h1", text=name[:40]), _node("p", text=tagline[:80]), _node("nav", bind="nav"), _node("div", bind="list", entity="Service", children=[_node("a", href="/services/:id", children=[_node("h2", field="title"), _node("p", field="price")])])])
+
+
+def _ui_generic(name: str, tagline: str, primary: str, background: str, ink: str, route: str, source: str, detail: str) -> dict:
+    shell = {"minHeight": "100vh", "background": background, "color": ink, "padding": "32px", "maxWidth": "800px"}
+    if route == "/login":
+        return _node("div", style=shell, children=[_ui_auth(primary)])
+    if route == "/new":
+        return _node("div", style=shell, children=[_node("form", bind="form", entity=source, children=_form_fields("提交", primary))])
+    if ":id" in route:
+        return _node("div", style=shell, children=[_node("article", bind="detail", entity=source, children=[_node("h1", field="title"), _node("p", field="summary"), _node("p", field="body")])])
+    return _node("div", style=shell, children=[_node("h1", text=name[:40]), _node("p", text=tagline[:80]), _node("nav", bind="nav"), _node("div", bind="list", entity=source, children=[_node("a", href=detail, children=[_node("h2", field="title")])])])
+
+
+def _ui_auth(primary: str) -> dict:
+    return _node("div", bind="auth", style={"maxWidth": "400px", "padding": "48px 24px"}, children=[_node("h1", text="登录"), _node("p", text="用这个网站自己的账号。")])
+
+
+def _form_fields(action: str, primary: str) -> list[dict]:
+    return [
+        _node("h1", text=action[:40]),
+        _node("button", submit=True, text=action[:12], style={"background": primary, "color": "#fff", "border": "0", "borderRadius": "999px", "padding": "10px 20px"}),
+    ]
