@@ -8,7 +8,7 @@ import time
 from sqlalchemy import func, select
 
 from app.ai.compile import compile_schema
-from app.ai.model import create_draft, edit_draft
+from app.ai.model import create_draft, edit_draft, explain_source
 from app.ai.planner import slug_base
 from app.ai.seed import seed_marketplace
 from app.models import Application, AppVersion, GenerationJob
@@ -94,12 +94,7 @@ def _create(platform, apps, settings: Settings, job: GenerationJob, app: Applica
     app.updated_at = utcnow()
     if schema["template"] == "marketplace":
         seed_marketplace(apps, settings, app.id)
-    note = "已保存为 v1"
-    if source == "model":
-        note = "已用模型生成，并保存为 v1"
-    elif source.startswith("local:") and settings.ai_configured:
-        note = "模型没有返回可用结果，已用本地模板保存为 v1"
-    _succeed(platform, settings, job, app, 1, report, note)
+    _succeed(platform, settings, job, app, 1, report, explain_source(source), source)
 
 
 def _edit(platform, settings: Settings, job: GenerationJob, app: Application) -> None:
@@ -169,16 +164,17 @@ def _beat(platform, settings: Settings, job: GenerationJob, key: str, status: st
         time.sleep(0.55)
 
 
-def _succeed(platform, settings, job, app, version: int, report: dict, message: str) -> None:
+def _succeed(platform, settings, job, app, version: int, report: dict, message: str, source: str = "local") -> None:
     _beat(platform, settings, job, "testing", "done")
     _beat(platform, settings, job, "ready", "done")
     job.status = "succeeded"
-    job.result_message = message
+    job.result_message = message[:300]
     job.result_json = dumps(
         {
             "slug": app.slug,
             "name": app.name,
             "version": version,
+            "source": source,
             "scan": [{"id": item["id"], "ok": item["ok"]} for item in report["checks"]],
         }
     )

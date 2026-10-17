@@ -616,6 +616,54 @@ def test_model_draft_replaces_local_template(tmp_path, monkeypatch):
     assert draft["template"] == "generic"
 
 
+def test_chinese_model_schema_is_kept(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    from app.ai import model
+    from app.ai.compile import compile_schema
+    from app.settings import Settings
+    from awp_schema import security_scan
+
+    remote = {
+        "name": "邻里菜摊",
+        "description": "卖时蔬",
+        "template": "generic",
+        "theme": {"primary": "#1f4b99", "background": "#f7f6f3", "ink": "#1c1917", "logo": "菜摊", "tagline": "卖时蔬", "currency": "CNY"},
+        "entities": [
+            {
+                "name": "蔬菜",
+                "label": "蔬菜",
+                "access": "public",
+                "titleField": "名称",
+                "fields": {
+                    "名称": {"type": "string", "label": "名称", "required": True, "searchable": True},
+                    "价格": {"type": "decimal", "label": "价格"},
+                },
+            }
+        ],
+        "pages": [
+            {
+                "page": "首页",
+                "route": "/",
+                "layout": "default",
+                "components": [{"type": "Hero", "title": "邻里菜摊", "subtitle": "卖时蔬"}, {"type": "CardGrid", "source": "蔬菜"}],
+            },
+            {"page": "登录", "route": "/login", "layout": "default", "components": [{"type": "AuthForm"}]},
+        ],
+        "nav": [{"label": "首页", "route": "/"}],
+    }
+    monkeypatch.setattr(model, "_chat", lambda settings, system, user: (remote, "ok"))
+    settings = Settings.from_env()
+    settings.ai_api_key = "sk-test"
+    settings.ai_base_url = "https://example.invalid/v1"
+    settings.ai_model = "demo"
+    draft, source = model.create_draft("做一个卖菜的网站", settings)
+    assert source == "model"
+    assert draft["name"] == "邻里菜摊"
+    assert draft["entities"][0]["name"] == "Item"
+    assert "name" in draft["entities"][0]["fields"]
+    assert security_scan(compile_schema(draft, 1))["ok"]
+
+
 def test_health_reports_when_ai_key_is_missing(client):
     health = client.get("/api/v1/health")
     assert health.status_code == 200

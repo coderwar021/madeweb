@@ -4,8 +4,9 @@ import json
 import logging
 import re
 from typing import Any
-from urllib import error, request
 from urllib.parse import urlparse
+
+import httpx
 
 from awp_security.prompt import sanitize_prompt
 from awp_security.redact import redact
@@ -13,7 +14,7 @@ from awp_schema import security_scan
 from awp_schema.validate import COMPONENTS, FIELD_TYPES
 
 from app.ai.compile import compile_schema
-from app.ai.planner import generic_schema, plan_create, plan_edit
+from app.ai.planner import plan_create, plan_edit
 from app.settings import Settings
 
 log = logging.getLogger("awp.ai")
@@ -43,25 +44,55 @@ Do not include urls, secrets, scripts, passwords, api keys, or shell commands.
 
 _URL_RE = re.compile(r"(?i)https?://\S+")
 _SECRET_RE = re.compile(r"(?i)(api[_-]?key\s*[:=]|BEGIN [A-Z ]*PRIVATE KEY|\bsk-[A-Za-z0-9]{10,}|password\s*[:=]\s*\S+)")
+_last_status = {"reason": "", "ok": False}
+_FIELD_HINTS = {
+    "标题": "title",
+    "名称": "name",
+    "名字": "name",
+    "描述": "description",
+    "介绍": "description",
+    "价格": "price",
+    "图片": "images",
+    "封面": "cover",
+    "内容": "body",
+    "摘要": "summary",
+    "时间": "slot",
+    "地点": "location",
+    "状态": "status",
+    "分类": "categoryId",
+}
+_REASONS = {
+    "auth": "密钥或模型名不被网关接受",
+    "http": "模型接口返回了错误",
+    "network": "连不上模型接口",
+    "format": "模型没有返回网站定义",
+    "schema": "模型返回的内容没有通过校验",
+    "unset": "没有配置密钥",
+}
 
 
 def create_draft(prompt: str, settings: Settings) -> tuple[dict, str]:
     local = plan_create(prompt)
     if not settings.ai_configured:
+        _remember("unset", False)
         return local, "local"
     remote, reason = _chat(settings, SYSTEM_CREATE, _create_user(prompt))
     if remote is None:
         log.info("ai create unused: %s", reason)
+        _remember(reason, False)
         return local, f"local:{reason}"
     cleaned = _clean_schema(remote)
     if cleaned is None:
         log.info("ai create unused: schema")
+        _remember("schema", False)
         return local, "local:schema"
     compiled = compile_schema(cleaned, 1)
     report = security_scan(compiled)
     if not report["ok"]:
         log.info("ai create unused: %s", ",".join(report.get("errors") or [])[:200])
+        _remember("schema", False)
         return local, "local:schema"
+    _remember("ok", True)
     return cleaned, "model"
 
 
@@ -85,12 +116,10 @@ def edit_draft(schema: dict, prompt: str, settings: Settings) -> tuple[dict | No
 
 
 def _create_user(prompt: str) -> str:
-    example = generic_schema("示例站点")
     return json.dumps(
         {
             "idea": sanitize_prompt(prompt),
-            "formatExample": example,
-            "task": "Build a new site definition for the idea. The example only shows the JSON shape.",
+            "task": "Build a new site for this idea. Use English PascalCase entity names like Product or Lesson, and camelCase field names like title or price. Chinese is fine for labels and copy.",
         },
         ensure_ascii=False,
     )
@@ -116,8 +145,10 @@ def _clean_schema(raw: dict) -> dict | None:
         return None
     template = raw.get("template") if raw.get("template") in {"marketplace", "blog", "booking", "generic"} else "generic"
     theme = _theme(raw.get("theme"), name, description)
-    entities = _entities(raw.get("entities"))
-    pages = _pages(raw.get("pages"), {item["name"] for item in entities})
+    entities, aliases = _entities(raw.get("entities"))
+    pages = _pages(raw.get("pages"), {item["name"] for item in entities}, aliases)
+    if entities and not pages:
+        pages = _fallback_pages(name, description, entities[0]["name"])
     nav = _nav(raw.get("nav"), pages)
     if not entities or not pages:
         return None
@@ -144,28 +175,37 @@ def _theme(raw: Any, name: str, tagline: str) -> dict:
     }
 
 
-def _entities(raw: Any) -> list[dict]:
+def _entities(raw: Any) -> tuple[list[dict], dict[str, str]]:
     items: list[dict] = []
     names: set[str] = set()
+    aliases: dict[str, str] = {}
     if not isinstance(raw, list):
-        return items
+        return items, aliases
+    pending: list[tuple[dict, str, dict[str, str]]] = []
     for item in raw[:24]:
         if not isinstance(item, dict):
             continue
-        name = str(item.get("name") or "")
-        if not re.fullmatch(r"[A-Z][A-Za-z0-9]{0,32}", name) or name in names:
-            continue
+        original = str(item.get("name") or item.get("label") or "")
+        name = _entity_name(original, names)
         fields = item.get("fields")
         if not isinstance(fields, dict) or not fields:
             continue
         cleaned_fields: dict[str, dict] = {}
+        field_aliases: dict[str, str] = {}
+        used_fields: set[str] = set()
         for key, spec in list(fields.items())[:24]:
-            field = _field(key, spec)
-            if field:
-                cleaned_fields[key] = field
+            field_name, field = _field(key, spec, used_fields)
+            if not field_name or not field:
+                continue
+            cleaned_fields[field_name] = field
+            field_aliases[str(key)] = field_name
+            if isinstance(spec, dict) and spec.get("label"):
+                field_aliases[str(spec.get("label"))] = field_name
+            used_fields.add(field_name)
         if not cleaned_fields:
             continue
-        title = item.get("titleField")
+        title_raw = str(item.get("titleField") or "")
+        title = field_aliases.get(title_raw, title_raw)
         if title not in cleaned_fields:
             title = next(iter(cleaned_fields))
         access = item.get("access") if item.get("access") in {"public", "private", "participant"} else "public"
@@ -178,23 +218,33 @@ def _entities(raw: Any) -> list[dict]:
         }
         unique = item.get("unique")
         if isinstance(unique, list):
-            keep = [str(value) for value in unique if str(value) in cleaned_fields][:4]
+            keep = [field_aliases.get(str(value), str(value)) for value in unique]
+            keep = [value for value in keep if value in cleaned_fields][:4]
             if keep:
                 entity["unique"] = keep
         items.append(entity)
         names.add(name)
-    return items
+        aliases[original] = name
+        aliases[name] = name
+        pending.append((entity, name, field_aliases))
+    for entity, _name, _field_aliases in pending:
+        for spec in entity["fields"].values():
+            if spec.get("type") == "relation":
+                spec["target"] = aliases.get(spec.get("target", ""), spec.get("target", ""))
+        entity["fields"] = {key: spec for key, spec in entity["fields"].items() if spec.get("type") != "relation" or spec.get("target") in names}
+        if not entity["fields"]:
+            items = [item for item in items if item is not entity]
+    return items, aliases
 
 
-def _field(name: Any, spec: Any) -> dict | None:
-    if not isinstance(name, str) or not re.fullmatch(r"[a-z][A-Za-z0-9]{0,32}", name):
-        return None
+def _field(name: Any, spec: Any, used: set[str]) -> tuple[str | None, dict | None]:
     if not isinstance(spec, dict):
-        return None
+        return None, None
     kind = spec.get("type")
     if kind not in FIELD_TYPES:
-        return None
-    field = {"type": kind, "label": _text(spec.get("label"), 20) or name}
+        return None, None
+    field_name = _field_name(str(name or spec.get("label") or ""), used)
+    field = {"type": kind, "label": _text(spec.get("label"), 20) or field_name}
     if spec.get("required") is True:
         field["required"] = True
     if spec.get("searchable") is True:
@@ -206,20 +256,20 @@ def _field(name: Any, spec: Any) -> dict | None:
     if kind == "enum":
         values = [str(item)[:32] for item in spec.get("values", []) if str(item)][:12]
         if not values:
-            return None
+            return None, None
         field["values"] = values
         default = spec.get("default")
         if default in values:
             field["default"] = default
     if kind == "relation":
         target = str(spec.get("target") or "")
-        if not re.fullmatch(r"[A-Z][A-Za-z0-9]{0,32}", target):
-            return None
+        if not target:
+            return None, None
         field["target"] = target
-    return field
+    return field_name, field
 
 
-def _pages(raw: Any, entities: set[str]) -> list[dict]:
+def _pages(raw: Any, entities: set[str], aliases: dict[str, str]) -> list[dict]:
     pages: list[dict] = []
     routes: set[str] = set()
     if not isinstance(raw, list):
@@ -232,7 +282,7 @@ def _pages(raw: Any, entities: set[str]) -> list[dict]:
             continue
         components = []
         for component in item.get("components") or []:
-            cleaned = _component(component, entities)
+            cleaned = _component(component, entities, aliases)
             if cleaned:
                 components.append(cleaned)
         if not components:
@@ -249,7 +299,7 @@ def _pages(raw: Any, entities: set[str]) -> list[dict]:
     return pages
 
 
-def _component(raw: Any, entities: set[str]) -> dict | None:
+def _component(raw: Any, entities: set[str], aliases: dict[str, str]) -> dict | None:
     if not isinstance(raw, dict):
         return None
     kind = raw.get("type")
@@ -261,8 +311,10 @@ def _component(raw: Any, entities: set[str]) -> dict | None:
         value = raw.get(key)
         if not isinstance(value, str) or not value:
             continue
-        if key in {"entity", "source"} and value not in entities:
-            continue
+        if key in {"entity", "source"}:
+            value = aliases.get(value, value)
+            if value not in entities:
+                continue
         component[key] = _text(value, 80)
     if kind in {"ProductGrid", "CardGrid", "Form", "Table", "Detail", "Comment", "Search"} and not (component.get("source") or component.get("entity")):
         return None
@@ -304,6 +356,55 @@ def _color(value: Any, fallback: str) -> str:
     return fallback
 
 
+def _fallback_pages(name: str, tagline: str, source: str) -> list[dict]:
+    return [
+        {
+            "page": "Home",
+            "route": "/",
+            "layout": "default",
+            "components": [
+                {"type": "Hero", "title": name[:80], "subtitle": tagline[:80] or name},
+                {"type": "CardGrid", "source": source},
+            ],
+        },
+        {"page": "Create", "route": "/new", "layout": "default", "components": [{"type": "Form", "source": source, "mode": "create"}]},
+        {"page": "Login", "route": "/login", "layout": "default", "components": [{"type": "AuthForm"}]},
+        {"page": "Detail", "route": f"/{source.lower()}s/:id", "layout": "default", "components": [{"type": "Detail", "source": source}]},
+    ]
+
+
+def _entity_name(raw: str, used: set[str]) -> str:
+    if re.fullmatch(r"[A-Z][A-Za-z0-9]{0,32}", raw) and raw not in used:
+        return raw
+    letters = re.sub(r"[^A-Za-z0-9]", "", raw)
+    candidate = (letters[0].upper() + letters[1:32]) if letters else "Item"
+    if not candidate[0].isalpha():
+        candidate = f"E{candidate}"[:33]
+    base = candidate
+    index = 2
+    while candidate in used:
+        candidate = f"{base}{index}"[:33]
+        index += 1
+    return candidate
+
+
+def _field_name(raw: str, used: set[str]) -> str:
+    if re.fullmatch(r"[a-z][A-Za-z0-9]{0,32}", raw) and raw not in used:
+        return raw
+    if raw in _FIELD_HINTS and _FIELD_HINTS[raw] not in used:
+        return _FIELD_HINTS[raw]
+    letters = re.sub(r"[^A-Za-z0-9]", "", raw)
+    candidate = (letters[0].lower() + letters[1:32]) if letters else "field"
+    if not candidate[0].isalpha():
+        candidate = f"f{candidate}"[:33]
+    base = candidate
+    index = 2
+    while candidate in used:
+        candidate = f"{base}{index}"[:33]
+        index += 1
+    return candidate
+
+
 def _chat(settings: Settings, system: str, user: str) -> tuple[dict | None, str]:
     if not settings.ai_configured:
         return None, "unset"
@@ -316,38 +417,79 @@ def _chat(settings: Settings, system: str, user: str) -> tuple[dict | None, str]
             {"role": "user", "content": user},
         ],
     }
-    body = json.dumps(payload).encode()
-    req = request.Request(
-        _completions_url(settings.ai_base_url),
-        data=body,
-        method="POST",
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {settings.ai_api_key}",
-            "api-key": settings.ai_api_key,
-        },
-    )
+    urls = _completion_urls(settings.ai_base_url)
+    last = "network"
+    for url in urls:
+        raw, last = _post(url, settings.ai_api_key, payload)
+        if raw is None and last == "http":
+            retry = dict(payload)
+            retry.pop("temperature", None)
+            retry.pop("max_tokens", None)
+            raw, last = _post(url, settings.ai_api_key, retry)
+        if raw is not None:
+            content = _message_text(raw)
+            parsed = _parse_json(content)
+            if isinstance(parsed, dict):
+                return parsed, "ok"
+            log.info("ai response was not an object: %s", redact(str(content)[:200]))
+            return None, "format"
+    return None, last
+
+
+def _post(url: str, key: str, payload: dict) -> tuple[dict | None, str]:
     try:
-        with request.urlopen(req, timeout=60) as response:
-            raw = json.loads(response.read().decode())
-    except error.HTTPError as exc:
-        detail = redact(exc.read().decode(errors="ignore")[:180])
-        log.info("ai http %s %s", exc.code, detail)
-        if exc.code in {401, 403}:
-            return None, "auth"
-        return None, "http"
-    except error.URLError:
+        with httpx.Client(timeout=60.0, follow_redirects=True) as client:
+            response = client.post(
+                url,
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "api-key": key,
+                },
+            )
+    except httpx.HTTPError:
         log.info("ai request failed")
         return None, "network"
-    except Exception:
-        log.exception("ai request failed")
-        return None, "error"
-    content = (((raw.get("choices") or [{}])[0].get("message") or {}).get("content")) or ""
-    parsed = _parse_json(content)
-    if not isinstance(parsed, dict):
-        log.info("ai response was not an object: %s", redact(content[:200]))
+    if response.status_code in {401, 403}:
+        log.info("ai http %s %s", response.status_code, redact(response.text[:180]))
+        return None, "auth"
+    if response.status_code == 404:
+        return None, "http"
+    if response.status_code >= 400:
+        log.info("ai http %s %s", response.status_code, redact(response.text[:180]))
+        return None, "http"
+    try:
+        return response.json(), "ok"
+    except ValueError:
         return None, "format"
-    return parsed, "ok"
+
+
+def _message_text(raw: dict) -> str:
+    if isinstance(raw.get("error"), dict):
+        return ""
+    choice = (raw.get("choices") or [{}])[0]
+    message = choice.get("message") or {}
+    content = message.get("content")
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                parts.append(str(item.get("text") or item.get("content") or ""))
+        content = "\n".join(parts)
+    if not content:
+        content = message.get("reasoning_content") or choice.get("text") or raw.get("content") or ""
+    return str(content or "")
+
+
+def _completion_urls(base: str) -> list[str]:
+    url = _completions_url(base)
+    urls = [url]
+    if "/v1/" not in url and not url.endswith("/v1/chat/completions"):
+        trimmed = (base or "").rstrip("/")
+        urls.append(f"{trimmed}/v1/chat/completions")
+    return list(dict.fromkeys(urls))
 
 
 def _completions_url(base: str) -> str:
@@ -377,10 +519,26 @@ def _parse_json(text: str) -> Any:
         return None
 
 
+def explain_source(source: str) -> str:
+    if source == "model":
+        return "已用模型生成，并保存为 v1"
+    if source.startswith("local:"):
+        reason = _REASONS.get(source.split(":", 1)[1], "模型没有返回可用结果")
+        return f"{reason}，已用本地模板保存为 v1"
+    return "已保存为 v1"
+
+
 def public_ai_status(settings: Settings) -> dict:
-    host = urlparse(settings.ai_base_url).netloc if settings.ai_configured else ""
+    parsed = urlparse(settings.ai_base_url) if settings.ai_configured else None
     return {
         "configured": settings.ai_configured,
         "model": settings.ai_model if settings.ai_configured else "",
-        "host": host,
+        "host": parsed.netloc if parsed else "",
+        "path": (parsed.path or "") if parsed else "",
+        "last": dict(_last_status),
     }
+
+
+def _remember(reason: str, ok: bool) -> None:
+    _last_status["reason"] = reason
+    _last_status["ok"] = ok

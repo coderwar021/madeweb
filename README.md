@@ -77,7 +77,12 @@ npm run dev
 | `AI_BASE_URL` 或 `OPENAI_BASE_URL` | OpenAI 兼容地址，要包含 `/v1`。默认 `https://api.openai.com/v1`。NewAPI 也填网关的 `/v1` 地址。 |
 | `AI_MODEL` 或 `OPENAI_MODEL` | 模型名，默认 `gpt-4o-mini`。要写成网关里真实存在的模型名。 |
 
-打开 `/api/v1/health`，看到 `"ai":{"configured":true}` 才说明正在跑的服务读到了密钥。生成结束后，进度页会写「已用模型生成」；如果变成「模型没有返回可用结果，已用本地模板」，就是地址、密钥或模型名不对，或网关没有返回能通过校验的网站定义。
+打开 `/api/v1/health`，看到 `"configured": true` 只说明读到了密钥。真正生成一次后，看进度页的那句话，以及 health 里的 `"last"`：
+
+- `"last":{"ok":true,"reason":"ok"}`：模型结果已经用上
+- `"reason":"auth"`：密钥或模型名不被网关接受
+- `"reason":"schema"`：模型返回了内容，但字段名等没有通过校验
+- `"reason":"network"` 或 `"http"`：接口地址连不上，或网关报错。`AI_BASE_URL` 要带 `/v1`
 
 密钥只留在环境变量里。模型返回的内容会先去掉链接和不明字段，再校验。
 

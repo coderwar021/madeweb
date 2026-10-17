@@ -94,6 +94,11 @@ const zh = {
   savedVersion: "已保存为 v{v}",
   savedByModel: "已用模型生成，并保存为 v1",
   savedByLocalFallback: "模型没有返回可用结果，已用本地模板保存为 v1",
+  savedByLocalAuth: "密钥或模型名不被网关接受，已用本地模板保存为 v1",
+  savedByLocalHttp: "模型接口返回了错误，已用本地模板保存为 v1",
+  savedByLocalNetwork: "连不上模型接口，已用本地模板保存为 v1",
+  savedByLocalFormat: "模型没有返回网站定义，已用本地模板保存为 v1",
+  savedByLocalSchema: "模型返回的内容没有通过校验，已用本地模板保存为 v1",
   addedFeatures: "已添加{names}",
   alreadyThere: "这个功能已经在当前版本里了。",
   cannotEdit: "我还不能安全地实现这个修改。可以试试：增加收藏、评论、订单或搜索。",
@@ -284,6 +289,11 @@ const ja: { [K in keyof typeof zh]: string } = {
   savedVersion: "v{v} として保存しました",
   savedByModel: "モデルで生成し、v1 として保存しました",
   savedByLocalFallback: "モデルから使える結果がなかったので、ローカル雛形で v1 を保存しました",
+  savedByLocalAuth: "鍵またはモデル名が受け付けられず、ローカル雛形で v1 を保存しました",
+  savedByLocalHttp: "モデル API がエラーを返し、ローカル雛形で v1 を保存しました",
+  savedByLocalNetwork: "モデル API に接続できず、ローカル雛形で v1 を保存しました",
+  savedByLocalFormat: "モデルがサイト定義を返さず、ローカル雛形で v1 を保存しました",
+  savedByLocalSchema: "モデルの結果が検査を通らず、ローカル雛形で v1 を保存しました",
   addedFeatures: "{names}を追加しました",
   alreadyThere: "この機能は今のバージョンにすでにあります。",
   cannotEdit: "この変更は安全に実装できません。お気に入り、コメント、注文、検索を試してください。",
@@ -474,6 +484,11 @@ const en: { [K in keyof typeof zh]: string } = {
   savedVersion: "Saved as v{v}",
   savedByModel: "Generated with the model and saved as v1",
   savedByLocalFallback: "The model did not return a usable site. Saved the local template as v1",
+  savedByLocalAuth: "The gateway rejected the key or model name. Saved the local template as v1",
+  savedByLocalHttp: "The model API returned an error. Saved the local template as v1",
+  savedByLocalNetwork: "Could not reach the model API. Saved the local template as v1",
+  savedByLocalFormat: "The model did not return a site definition. Saved the local template as v1",
+  savedByLocalSchema: "The model result failed validation. Saved the local template as v1",
   addedFeatures: "Added {names}",
   alreadyThere: "That feature is already in this version.",
   cannotEdit: "That change cannot be made safely. Try adding favorites, comments, orders, or search.",
@@ -836,7 +851,12 @@ export function jobText(t: (key: MessageKey, vars?: Record<string, string | numb
   const saved = message.match(/^已保存为 v(\d+)$/);
   if (saved) return t("savedVersion", { v: saved[1] });
   if (message === "已用模型生成，并保存为 v1") return t("savedByModel");
-  if (message === "模型没有返回可用结果，已用本地模板保存为 v1") return t("savedByLocalFallback");
+  if (message === "密钥或模型名不被网关接受，已用本地模板保存为 v1") return t("savedByLocalAuth");
+  if (message === "模型接口返回了错误，已用本地模板保存为 v1") return t("savedByLocalHttp");
+  if (message === "连不上模型接口，已用本地模板保存为 v1") return t("savedByLocalNetwork");
+  if (message === "模型没有返回网站定义，已用本地模板保存为 v1") return t("savedByLocalFormat");
+  if (message === "模型返回的内容没有通过校验，已用本地模板保存为 v1") return t("savedByLocalSchema");
+  if (message.endsWith("已用本地模板保存为 v1")) return t("savedByLocalFallback");
   if (message === "这个功能已经在当前版本里了。") return t("alreadyThere");
   if (message === "已按你的说明更新") return t("studioHint");
   if (message.startsWith("我还不能安全地实现这个修改")) return t("cannotEdit");
