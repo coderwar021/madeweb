@@ -597,6 +597,31 @@ def test_user_admin_stays_away_from_model_channels(client):
     assert refused.json()["detail"] == "账号已停用"
 
 
+def test_model_draft_replaces_local_template(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    from app.ai import model
+    from app.ai.planner import generic_schema
+    from app.settings import Settings
+
+    remote = generic_schema("邻里菜摊")
+    remote["name"] = "邻里菜摊"
+    monkeypatch.setattr(model, "_chat", lambda settings, system, user: (remote, "ok"))
+    settings = Settings.from_env()
+    settings.ai_api_key = "sk-test"
+    settings.ai_base_url = "https://example.invalid/v1"
+    settings.ai_model = "demo"
+    draft, source = model.create_draft("做一个卖菜的网站，不要二手市集", settings)
+    assert source == "model"
+    assert draft["name"] == "邻里菜摊"
+    assert draft["template"] == "generic"
+
+
+def test_health_reports_when_ai_key_is_missing(client):
+    health = client.get("/api/v1/health")
+    assert health.status_code == 200
+    assert health.json()["ai"]["configured"] is False
+
+
 def test_ssrf_redact_and_scan():
     from awp_security.redact import redact
     from awp_security.ssrf import is_blocked_host, is_safe_url

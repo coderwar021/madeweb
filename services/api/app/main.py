@@ -105,7 +105,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/v1/health")
     def health():
-        return {"ok": True}
+        from app.ai.model import public_ai_status
+
+        return {"ok": True, "ai": public_ai_status(settings)}
 
     app.include_router(auth.router, prefix="/api/v1")
     app.include_router(users.router, prefix="/api/v1")

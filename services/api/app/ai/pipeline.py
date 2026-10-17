@@ -70,7 +70,7 @@ def process_job(job_id: str, settings: Settings) -> None:
 def _create(platform, apps, settings: Settings, job: GenerationJob, app: Application) -> None:
     _beat(platform, settings, job, "intent", "done")
     _beat(platform, settings, job, "database", "running")
-    draft = create_draft(job.prompt, settings)
+    draft, source = create_draft(job.prompt, settings)
     _beat(platform, settings, job, "database", "done")
     _beat(platform, settings, job, "interface", "running")
     if not draft.get("pages"):
@@ -85,7 +85,7 @@ def _create(platform, apps, settings: Settings, job: GenerationJob, app: Applica
     if not report["ok"]:
         _fail(platform, job, "testing", "安全校验没有通过")
         return
-    version = _save_version(platform, app, schema, "初始版本", 1)
+    version = _save_version(platform, app, schema, "模型生成" if source == "model" else "本地模板", 1)
     app.name = schema["name"][:40]
     app.description = schema["description"][:200]
     app.template = schema["template"]
@@ -94,7 +94,12 @@ def _create(platform, apps, settings: Settings, job: GenerationJob, app: Applica
     app.updated_at = utcnow()
     if schema["template"] == "marketplace":
         seed_marketplace(apps, settings, app.id)
-    _succeed(platform, settings, job, app, 1, report, "已保存为 v1")
+    note = "已保存为 v1"
+    if source == "model":
+        note = "已用模型生成，并保存为 v1"
+    elif source.startswith("local:") and settings.ai_configured:
+        note = "模型没有返回可用结果，已用本地模板保存为 v1"
+    _succeed(platform, settings, job, app, 1, report, note)
 
 
 def _edit(platform, settings: Settings, job: GenerationJob, app: Application) -> None:

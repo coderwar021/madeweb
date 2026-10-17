@@ -60,9 +60,9 @@ class Settings:
             database_url=os.environ.get("DATABASE_URL") or None,
             apps_database_url=os.environ.get("APPS_DATABASE_URL") or None,
             admin_emails=admins,
-            ai_api_key=os.environ.get("AI_API_KEY", "").strip(),
-            ai_base_url=os.environ.get("AI_BASE_URL", "https://api.openai.com/v1").strip(),
-            ai_model=os.environ.get("AI_MODEL", "gpt-4o-mini").strip(),
+            ai_api_key=(os.environ.get("AI_API_KEY") or os.environ.get("OPENAI_API_KEY") or "").strip(),
+            ai_base_url=(os.environ.get("AI_BASE_URL") or os.environ.get("OPENAI_BASE_URL") or os.environ.get("OPENAI_API_BASE") or "https://api.openai.com/v1").strip(),
+            ai_model=(os.environ.get("AI_MODEL") or os.environ.get("OPENAI_MODEL") or "gpt-4o-mini").strip(),
             fast_pipeline=os.environ.get("PIPELINE_FAST") == "1",
             bcrypt_rounds=int(os.environ.get("BCRYPT_ROUNDS", "12")),
             cookie_secure=cookie_secure,
@@ -71,6 +71,10 @@ class Settings:
             cors_origins=origins,
             repo_root=root,
         )
+
+    @property
+    def ai_configured(self) -> bool:
+        return bool(self.ai_api_key and self.ai_base_url and self.ai_model)
 
     @property
     def platform_url(self) -> str:
